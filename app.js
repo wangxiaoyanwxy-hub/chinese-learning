@@ -80,7 +80,9 @@ function validateState(value) {
     }
     const words = new Set();
     for (const entry of lesson.entries) {
-      if (!Array.isArray(entry) || entry.length !== 2 || !validString(entry[0], 160) ||
+      if (!Array.isArray(entry) || (entry.length !== 2 &&
+          !(entry.length === 3 && entry[2] === "extra" && lesson.kind === "words")) ||
+          !validString(entry[0], 160) ||
           !entry[0].trim() || words.has(entry[0]) || !validString(entry[1], 220)) {
         throw Error("backup entry");
       }
@@ -88,7 +90,7 @@ function validateState(value) {
     }
     ids.add(lesson.id);
     next.lessons.push({ id: lesson.id, title: lesson.title, kind: lesson.kind,
-      author: lesson.author, entries: lesson.entries.map(([word, pinyin]) => [word, pinyin]) });
+      author: lesson.author, entries: lesson.entries.map(entry => entry.slice()) });
   }
   for (const mode of Object.keys(modes)) {
     const records = value.progress[mode];
@@ -132,7 +134,7 @@ function itemsFor(lesson, type = "entries") {
     return [...found.values()];
   }
   return lesson.entries.map(([text, pinyin = "", group]) => make(text, pinyin,
-    lesson.kind === "poem" ? "诗句" : group === "extra" ? "补充" : lesson.id.startsWith("local-") ? "自定义" : "必学", "entry"));
+    lesson.kind === "poem" ? "诗句" : group === "extra" ? "补充" : "必学", "entry"));
 }
 
 function allItems(lesson) {
@@ -250,7 +252,8 @@ function parentPage() {
     '<div class="row"><button class="primary" data-action="export">导出备份</button>' +
     '<button data-action="import">选取备份</button><input type="file" name="backup" accept=".json,application/json" hidden></div></section>' +
     '<section class="card stack"><h2>自定义课文</h2><p class="subtle">新增的内容保存在这台设备。</p>' +
-    '<div class="row"><button class="secondary" data-action="edit">添加课文</button>' +
+    '<div class="row"><button class="primary" data-action="import-lesson">导入字词表</button>' +
+    '<button class="secondary" data-action="edit">添加课文</button>' +
     (lesson?.id.startsWith("local-") ? '<button data-action="edit" data-value="' + escape(lesson.id) +
     '">编辑选中课文</button><button class="warn" data-action="remove">删除选中课文</button>' : "") +
     '</div><div id="editor-slot"></div></section>' +
@@ -282,53 +285,87 @@ function showEditor(id) {
   function updateLabels() {
     const poem = field("kind").value === "poem";
     form.querySelector("[data-author]").hidden = !poem;
+    form.querySelector("[data-extra]").hidden = poem;
     form.querySelector("[data-text-label]").firstChild.textContent = poem ?
-      "每行一句诗，可在句后加「｜拼音」" : "每行一个字词，可在词后加「｜拼音」";
+      "每行一句诗，可在句后加「｜拼音」" : "必学词（每行一个，可在词后加「｜拼音」）";
   }
   if (original) {
     field("title").value = original.title;
     field("kind").value = original.kind;
     field("kind").disabled = true;
     field("author").value = original.author;
-    field("content").value = original.entries.map(([word, pinyin]) => word + (pinyin ? "｜" + pinyin : "")).join("\n");
+    const asLines = entries => entries.map(([word, pinyin]) => word + (pinyin ? "｜" + pinyin : "")).join("\n");
+    field("content").value = asLines(original.entries.filter(entry => entry[2] !== "extra"));
+    field("extra").value = asLines(original.entries.filter(entry => entry[2] === "extra"));
   }
   updateLabels();
   field("kind").addEventListener("change", updateLabels);
   form.addEventListener("submit", event => {
     event.preventDefault();
-    const title = field("title").value.trim();
     const kind = field("kind").value;
-    const entries = [...new Map(field("content").value.split(/\r?\n/).map(line => {
-      const [word, pinyin = ""] = line.split(/[｜|]/, 2);
-      return [word.trim(), pinyin.trim()];
-    }).filter(([word]) => word)).entries()];
-    if (!title || !entries.length || entries.length > 500 ||
-        entries.some(([word, pinyin]) => word.length > 160 || pinyin.length > 220)) {
-      notice("请填写课文名称和内容，每课最多 500 行，每行字词或诗句最多 160 个字符。");
-      return;
-    }
-    const lesson = { id: original?.id ?? "local-" + crypto.randomUUID(),
-      title, kind, entries, author: kind === "poem" ? field("author").value.trim() : "" };
-    const kept = new Set(allItems(lesson).map(item => item.key));
-    if (original && original.kind === "poem" &&
-        original.entries.map(entry => entry[0]).join("\n") !== entries.map(entry => entry[0]).join("\n")) {
-      kept.delete(itemsFor(lesson, "whole")[0].key);
-    }
-    if (!changeState(next => {
-      if (!original && next.lessons.length >= 500) throw Error("lesson limit");
-      if (original) {
-        next.lessons = next.lessons.map(item => item.id === lesson.id ? lesson : item);
-        pruneResults(next, lesson.id, kept);
-      } else next.lessons.push(lesson);
-    })) return;
-    for (const type of ["entries", "chars", "whole"]) view.selections.delete(lesson.id + ":" + type);
-    view.parentId = lesson.id;
-    render();
-    root.querySelector('[data-change="parent-lesson"]').focus();
-    notice("课文已保存。");
+    const error = saveLocalLesson({
+      title: field("title").value, kind, author: field("author").value,
+      required: field("content").value, extra: field("extra").value, original
+    });
+    if (error) notice(error);
+    else showSavedLesson();
   });
   slot.replaceChildren(form);
   field("title").focus();
+}
+
+function saveLocalLesson({ title, kind = "words", required, extra = "", author = "", original }) {
+  title = title.trim();
+  const parse = (value, group) => value.split(/\r?\n/).map(line => {
+    const [word, pinyin = ""] = line.split(/[｜|]/, 2);
+    return [word.trim(), pinyin.trim(), ...group];
+  }).filter(entry => entry[0]);
+  const candidates = [...parse(required, []), ...(kind === "words" ? parse(extra, ["extra"]) : [])];
+  const unique = new Map();
+  for (const entry of candidates) {
+    const prior = unique.get(entry[0]);
+    if (prior && prior[2] !== entry[2]) return "「" + entry[0] + "」同时出现在两栏，请归到一栏后再保存。";
+    if (!prior || !prior[1]) unique.set(entry[0], entry);
+  }
+  const entries = [...unique.values()];
+  if (!title || title.length > 80 || !entries.length || entries.length > 500 ||
+      entries.some(([word, pinyin]) => word.length > 160 || pinyin.length > 220)) {
+    return "请填课名并保留至少一个条目。每课最多 500 项，每项正文最多 160 字。";
+  }
+  if (!original && state.lessons.length >= 500) return "已达到 500 课的保存上限。";
+  const lesson = { id: original?.id ?? "local-" + crypto.randomUUID(),
+    title, kind, entries, author: kind === "poem" ? author.trim() : "" };
+  const kept = new Set(allItems(lesson).map(item => item.key));
+  if (original && original.kind === "poem" &&
+      original.entries.map(entry => entry[0]).join("\n") !== entries.map(entry => entry[0]).join("\n")) {
+    kept.delete(itemsFor(lesson, "whole")[0].key);
+  }
+  if (!changeState(next => {
+    if (!original && next.lessons.length >= 500) throw Error("lesson limit");
+    if (original) {
+      next.lessons = next.lessons.map(item => item.id === lesson.id ? lesson : item);
+      pruneResults(next, lesson.id, kept);
+    } else next.lessons.push(lesson);
+  })) return "未能保存。请查看设备的储存空间，然后重试。";
+  for (const type of ["entries", "chars", "whole"]) view.selections.delete(lesson.id + ":" + type);
+  view.parentId = lesson.id;
+  return "";
+}
+
+function showSavedLesson() {
+  render();
+  root.querySelector('[data-change="parent-lesson"]').focus();
+  notice("课文已保存，可在「选课练习」中找到。");
+}
+
+async function importLesson() {
+  if (document.querySelector("#lesson-import-dialog")) return;
+  try {
+    const { openLessonImport } = await import("./lesson-import.mjs");
+    if (pageName() === "parent") openLessonImport(saveLocalLesson, showSavedLesson);
+  } catch {
+    notice("无法打开导入工具，请联网后重试。");
+  }
 }
 
 function pruneResults(next, lessonId, kept = new Set()) {
@@ -717,6 +754,7 @@ const actions = {
     pen?.draw();
   },
   edit: showEditor,
+  "import-lesson": importLesson,
   remove: removeLesson,
   export: exportBackup,
   import: () => root.querySelector('[name="backup"]').click(),

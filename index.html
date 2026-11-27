@@ -31,7 +31,8 @@
 <form class="stack editor">
 <label>课文或分组名称<input name="title" maxlength="80" required></label>
 <label>内容类型<select name="kind"><option value="words">字词</option><option value="poem">古诗</option></select></label>
-<label data-text-label>每行一个字词，可在词后加「｜拼音」<textarea name="content" rows="7" required></textarea></label>
+<label data-text-label>每行一个字词，可在词后加「｜拼音」<textarea name="content" rows="7"></textarea></label>
+<label data-extra>补充词（选填，每行一个）<textarea name="extra" rows="4"></textarea></label>
 <label data-author hidden>作者或朝代<input name="author" maxlength="100"></label>
 <button class="primary" type="submit">保存课文</button>
 </form>

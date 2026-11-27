@@ -108,6 +108,15 @@ input[type="checkbox"] { width: 1.1rem; min-height: auto; height: 1.1rem; margin
 details > summary { cursor: pointer; font-weight: 750; min-height: 44px; padding-block: .4rem; }
 dialog { color: var(--ink); border: 1px solid var(--line); border-radius: 20px; width: min(calc(100% - 2rem), 510px); padding: 1.35rem; }
 dialog::backdrop { background: #14292182; }
+.import-dialog { width: min(calc(100% - 1.2rem), 760px); max-height: calc(100% - 1.5rem); overflow: auto; }
+.import-form > label { min-width: 0; }
+.import-form input[type="file"] { min-width: 0; }
+.import-form progress { width: 100%; accent-color: var(--leaf); }
+.import-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem; }
+.import-columns textarea { min-height: 9rem; }
+.import-form [data-preview-image] { display: block; max-width: 100%; height: auto; margin-block: .55rem; }
+.import-form [data-page-picker] { max-width: 180px; }
+#lesson-import-dialog input:not([type="file"]), #lesson-import-dialog textarea { font-size: 1rem; }
 .footer { padding: .85rem 0 max(1.2rem, env(safe-area-inset-bottom)); justify-content: space-between; display: flex; flex-wrap: wrap; gap: .25rem 1rem; border-top: 1px solid var(--line); font-size: .85rem; }
 #notice { position: fixed; z-index: 3; bottom: max(1rem,env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); max-width: min(38rem, calc(100% - 2rem)); width: max-content; border-radius: 12px; padding: .65rem 1rem; color: white; background: var(--ink); box-shadow: var(--shadow); pointer-events: none; }
 #notice:empty { visibility: hidden; }
@@ -122,6 +131,7 @@ dialog::backdrop { background: #14292182; }
   .lesson-nav { max-height: 34vh; }
 }
 @media (max-width: 420px) {
+  .import-columns { grid-template-columns: 1fr; }
   .tiles { display: none; }
   .hero { grid-template-columns: 1fr; }
   .practice-actions > button { flex: 1 1 auto; }
