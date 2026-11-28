@@ -253,6 +253,8 @@ function parentPage() {
     '<button data-action="import">选取备份</button><input type="file" name="backup" accept=".json,application/json" hidden></div></section>' +
     '<section class="card stack"><h2>自定义课文</h2><p class="subtle">新增的内容保存在这台设备。</p>' +
     '<div class="row"><button class="primary" data-action="import-lesson">导入字词表</button>' +
+    '<button class="secondary" data-action="import-pack">导入课文包</button>' +
+    '<input type="file" name="lesson-pack" accept=".json,application/json" hidden>' +
     '<button class="secondary" data-action="edit">添加课文</button>' +
     (lesson?.id.startsWith("local-") ? '<button data-action="edit" data-value="' + escape(lesson.id) +
     '">编辑选中课文</button><button class="warn" data-action="remove">删除选中课文</button>' : "") +
@@ -440,6 +442,77 @@ async function importBackup(file) {
     render();
     notice("备份已恢复。");
   }
+}
+
+function parseLessonPack(value) {
+  if (value?.format !== "hanzi-island-lesson-pack" || value.version !== 1 ||
+      !Array.isArray(value.lessons) || value.lessons.length === 0 ||
+      (value.note !== undefined && (typeof value.note !== "string" || value.note.length > 220))) {
+    throw Error("lesson pack format");
+  }
+  return { lessons: validateState({ ...blankState(), lessons: value.lessons }).lessons, note: value.note };
+}
+
+function planLessonPack(existing, packLessons) {
+  const seenIds = new Set(existing.map(lesson => lesson.id));
+  const titles = new Set(existing.map(lesson => lesson.title));
+  const signature = lesson => JSON.stringify([lesson.title, lesson.kind, lesson.entries]);
+  const seenContent = new Set(existing.map(signature));
+  const additions = [];
+  for (const incoming of packLessons) {
+    const key = signature(incoming);
+    if (seenIds.has(incoming.id) || seenContent.has(key)) continue;
+    let title = incoming.title;
+    let copyNumber = 1;
+    while (titles.has(title)) {
+      const suffix = copyNumber === 1 ? "（导入）" : "（导入 " + copyNumber + "）";
+      title = incoming.title.slice(0, 80 - suffix.length) + suffix;
+      copyNumber++;
+    }
+    additions.push({ ...incoming, title });
+    seenIds.add(incoming.id);
+    titles.add(title);
+    seenContent.add(key);
+  }
+  return additions;
+}
+
+async function importLessonPack(file) {
+  if (!file || document.querySelector("dialog[open]")) return;
+  let pack;
+  try {
+    if (file.size > 2 * 1024 * 1024) throw Error("lesson pack size");
+    pack = parseLessonPack(JSON.parse((await file.text()).replace(/^\uFEFF/, "")));
+  } catch {
+    notice("无法读取课文包。请选择「字字岛课文包」JSON 文件。备份请从「备份与恢复」打开。");
+    return;
+  }
+  if (document.querySelector("dialog[open]")) return;
+  const planned = planLessonPack(state.lessons, pack.lessons);
+  if (!planned.length) {
+    notice("这份课文包的内容已在本机。");
+    return;
+  }
+  if (state.lessons.length + planned.length > 500) {
+    notice("课文超出保存上限，请选用内容较少的课文包。");
+    return;
+  }
+  const confirmed = await confirmAction(
+    "导入课文包",
+    "将追加 " + planned.length + " 课，已有课文和学习进度会保留。" +
+      (pack.note ? " " + pack.note : ""),
+    "确认追加");
+  if (!confirmed) return;
+  let added = [];
+  if (!changeState(next => {
+    added = planLessonPack(next.lessons, pack.lessons);
+    if (next.lessons.length + added.length > 500) throw Error("lesson limit");
+    next.lessons.push(...added);
+  })) return;
+  if (added.length) view.parentId = added[0].id;
+  render();
+  root.querySelector('[data-action="import-pack"]')?.focus();
+  notice(added.length ? "已追加 " + added.length + " 课，可在「选课练习」中查看。" : "课文包的内容已在本机。");
 }
 
 
@@ -755,6 +828,7 @@ const actions = {
   },
   edit: showEditor,
   "import-lesson": importLesson,
+  "import-pack": () => root.querySelector('[name="lesson-pack"]').click(),
   remove: removeLesson,
   export: exportBackup,
   import: () => root.querySelector('[name="backup"]').click(),
@@ -769,10 +843,11 @@ root.addEventListener("click", event => {
 
 root.addEventListener("change", event => {
   const field = event.target;
-  if (field.name === "backup") {
+  if (field.name === "backup" || field.name === "lesson-pack") {
     const file = field.files[0];
     field.value = "";
-    importBackup(file);
+    if (field.name === "backup") importBackup(file);
+    else importLessonPack(file);
   }
   switch (field.dataset.change) {
     case "shuffle":

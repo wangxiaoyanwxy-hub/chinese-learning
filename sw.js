@@ -1,5 +1,5 @@
 const prefix = `hanzi-island:${self.registration.scope}:`;
-const version = prefix + "v2";
+const version = prefix + "v3";
 const shell = [
   "./", "./index.html", "./style.css", "./app.js", "./library.js", "./manifest.webmanifest",
   "./icon-180.png", "./icon-192.png", "./icon-512.png", "./icon-maskable.png", "./lesson-import.mjs"
